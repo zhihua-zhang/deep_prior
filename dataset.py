@@ -1,3 +1,4 @@
+from concurrent.futures import process
 from random import shuffle
 import torch
 
@@ -9,12 +10,8 @@ import torch.nn.functional as F
 # (a) Load data & Preprocess
 ###############################################################################
 
-# select only the first two classes & downsample image
-def downsample(data, shape=(14,14)):
-    data = F.interpolate(data.unsqueeze(1), shape).squeeze()
-    return data
-
-def selectData(ds, n_sp=500):
+def selectData(ds, args):
+    n_sp = args.n_sp
     data_unsp_all = []
     data_sp_all = []
     for digit in range(10):
@@ -40,9 +37,6 @@ def preprocess(data):
     data = normalize(data)
     return data
   
-def transform_target(targets):
-    return torch.where(targets == 2, torch.zeros(1), torch.ones(1))
-
 def random_shuffle(data, target, seed=2022):
     idx = torch.randperm(len(data))
     data, target = map(lambda x: x[idx], [data, target])
@@ -63,7 +57,7 @@ class myDataset(torch.utils.data.Dataset):
     label = self.labels[idx]
     return image, label
 
-def get_dataset():
+def get_dataset(args):
   train_ds = torchvision.datasets.MNIST(root="./data/training.pt",
                                    train=True,
                                    download=True,
@@ -79,15 +73,16 @@ def get_dataset():
                                     ]))  
   ### Train
   # sp /unsp dataset
-  data_sp, target_sp, data_unsp, target_unsp = selectData(train_ds, n_sp=500)
-
-  # pre-process (normalize to [0,1])
-  data_sp, data_unsp = map(preprocess, [data_sp, data_unsp])
-  # target_sp, target_unsp = map(transform_target, [target_sp, target_unsp])
+  data_sp, target_sp, data_unsp, target_unsp = selectData(train_ds, args)
 
   ### Val
   data_val = val_ds.data.reshape(len(val_ds.data), -1).float()
   target_val = val_ds.targets.long()
+
+  # pre-process (normalize to [0,1])
+  data_sp, data_unsp, data_val = map(preprocess, [data_sp, data_unsp, data_val])
+  # data_sp, data_unsp, data_val = map(preprocess, [data_sp, data_unsp, data_val])
+  # target_sp, target_unsp = map(transform_target, [target_sp, target_unsp])
   
   # random shuffle
   data_unsp, target_unsp = random_shuffle(data_unsp, target_unsp)
@@ -98,12 +93,16 @@ def get_dataset():
   val_ds = myDataset(data_val, target_val)
   return train_ds_unsp, train_ds_sp, val_ds
 
-def get_loader(order=2, split=8, seed=2022):
-  torch.manual_seed(seed)    
-  train_ds_unsp, train_ds_sp, val_ds = get_dataset()
-
-  bz_sp = order * split
+def get_loader(args, seed=2022):
+  torch.manual_seed(seed)
+  
+  n_order = args.n_order
+  bz_sp = args.bz_sp
   bz_unsp = 7 * bz_sp
+  assert bz_unsp % n_order == 0, f"bz_unsp:{bz_unsp}, n_order:{n_order} - unsupervised batch size is not a multiple of n_order"
+  
+  train_ds_unsp, train_ds_sp, val_ds = get_dataset(args)
+
   train_loader_unsp = torch.utils.data.DataLoader(train_ds_unsp, batch_size=bz_unsp, shuffle=True)
   train_loader_sp = torch.utils.data.DataLoader(train_ds_sp, batch_size=bz_sp, shuffle=True)
   val_loader = torch.utils.data.DataLoader(val_ds, batch_size=64, shuffle=False)
@@ -118,5 +117,8 @@ def get_loader(order=2, split=8, seed=2022):
 
 
 if __name__ == "__main__":
-  train_ds_unsp, train_ds_sp, val_ds = get_dataset()
-  train_loader_unsp, train_loader_sp, val_loader = get_loader()
+    from main import get_args
+    args = get_args()
+    
+    train_ds_unsp, train_ds_sp, val_ds = get_dataset(args)
+    train_loader_unsp, train_loader_sp, val_loader = get_loader(args)
