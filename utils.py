@@ -30,7 +30,6 @@ def weak_augmentation(image_size=(224, 224)):
         # T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     )
 
-
 def strong_transform(image_size=(224, 224)):
     return nn.Sequential(
         tf.Resize(size=image_size),
@@ -70,11 +69,12 @@ def report(metrics, epochs, n_report=200):
     fig.savefig("./mnist_res.png")
     plt.close('all')
 
-def save_results(model, metrics, epoch):
+def save_results(model, model_ema, metrics, epoch):
     if os.path.exists("./checkpoints"):
         os.system("rm -rf ./checkpoints")
     os.makedirs("./checkpoints", exist_ok=True)
     torch.save(model.state_dict(), "./checkpoints/epoch={}-acc={:.3f}.pth".format(epoch+1, metrics["val"]["acc"][-1]))
+    torch.save(model_ema.state_dict(), "./checkpoints/ema-epoch={}-acc={:.3f}.pth".format(epoch+1, metrics["val"]["ema_acc"][-1]))
 
     if os.path.exists("./logs"):
         os.system("rm -rf ./logs")
