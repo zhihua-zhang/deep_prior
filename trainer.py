@@ -10,24 +10,29 @@ def evaluate(model, train_loader_sp, val_loader=None):
     
     n_total = 0
     correct = 0
-    for data_sp, targets in loader:
-        data_sp, targets = map(lambda x: x.to(device), [data_sp, targets])
-        out_sp = model(data_sp)
-        prob = out_sp[range(len(out_sp)), targets.flatten()].mean(dim=-1)
-        pred = torch.where(prob > 0.5, torch.ones(1, device=device), torch.zeros(1, device=device))
-        correct += (pred.flatten() == targets.flatten()).sum().item()
-        n_total += len(targets)
+    with torch.no_grad():
+        for data_sp, targets in loader:
+            data_sp, targets = map(lambda x: x.to(device), [data_sp, targets])
+            out_sp = model(data_sp)
+            prob = out_sp[range(len(out_sp)), targets.flatten()].mean(dim=-1)
+            pred = torch.where(prob > 0.5, torch.ones(1, device=device), torch.zeros(1, device=device))
+            correct += (pred.flatten() == targets.flatten()).sum().item()
+            n_total += len(targets)
     acc = correct / n_total
     
     return acc
 
-def train(model, model_ema, optimizer, epochs,
-          train_loader_unsp, train_loader_sp, val_loader,
-          n_step=1024, bz=448, gamma=1.0):
+def train(model, model_ema, optimizer, args, train_loader_unsp, train_loader_sp, val_loader):
+    
+    epochs = args.epochs
+    e_step = args.e_step
+    bz_actual = args.bz_actual
+    gamma = args.gamma
+    
     step = 0
-    total_steps = epochs * n_step
-    report_freq = 100
-    val_freq = 100
+    total_steps = epochs * e_step
+    report_freq = 10
+    val_freq = 500
     
     metrics = {
         "train": {
@@ -38,6 +43,7 @@ def train(model, model_ema, optimizer, epochs,
         },
         "val": {
             "acc": [],
+            "ema_acc": [],
         }
     }
 
@@ -47,6 +53,8 @@ def train(model, model_ema, optimizer, epochs,
     MI = torch.zeros(1, device=device)
     logLikelihood = torch.zeros(1, device=device)
     while e < epochs:
+        model.train()
+        
         # read data
         data_unsp, _ = next(iter(train_loader_unsp))
         data_sp, targets = next(iter(train_loader_sp))
@@ -71,7 +79,7 @@ def train(model, model_ema, optimizer, epochs,
         logLikelihood = logLikelihood + logLikelihood_i
         
         # weight update
-        if n_unsp >= bz:
+        if n_unsp >= bz_actual:
             MI = MI / n_unsp
             logLikelihood = logLikelihood / n_sp
             objective = gamma * MI + logLikelihood
@@ -84,35 +92,41 @@ def train(model, model_ema, optimizer, epochs,
             metrics["train"]["MI"].append(MI.item())
             metrics["train"]["logLikelihood"].append(logLikelihood.item())
             metrics["train"]["objective"].append(objective.item())
-            
-            # evaluation
-            if (step+1) % val_freq == 0:
-                train_acc = evaluate(model, train_loader_sp)
-                val_acc = evaluate(model, train_loader_sp, val_loader)
-                metrics["train"]["acc"].append(train_acc)
-                metrics["val"]["acc"].append(val_acc)
 
             # verbose
             if (step+1) % report_freq == 0:
                 print("Epoch {}, Step {}/{}, obj: {:.4f}, MI: {:.4f}, log_likelihood: {:.4f}".format(
-                    e+1, step, total_steps, objective.item(), MI.item(), logLikelihood.item()))
+                    e+1, step+1, total_steps, objective.item(), MI.item(), logLikelihood.item()))
             
-            # EMA weight update
-            model_ema.update(model)
-            
+            # evaluation
+            if (step+1) % val_freq == 0:
+                train_acc = evaluate(model, train_loader_sp, None)
+                val_acc = evaluate(model, None, val_loader)
+                val_ema_acc = evaluate(model_ema, None, val_loader)
+                metrics["train"]["acc"].append(train_acc)
+                metrics["val"]["acc"].append(val_acc)
+                metrics["val"]["ema_acc"].append(val_ema_acc)
+                
+                # verbose
+                print("Epoch {}, Step {}/{}, train acc: {:.4f}, val acc: {:.4f}, val ema acc: {:.4f}".format(
+                    e+1, step+1, total_steps, train_acc, val_acc, val_ema_acc))
+
             # reset
             n_unsp = 0
             n_sp = 0
             MI = torch.zeros(1, device=device)
             logLikelihood = torch.zeros(1, device=device)
             
-            step += 1
-            if (step + 1) % n_step == 0:
+            if (step + 1) % e_step == 0:
                 e += 1
+                # EMA weight update
+                model_ema.update(model)
             
-                if e % 10 == 0:
-                    save_results(model, metrics, e)
+                if e % args.save_freq == 0:
+                    save_results(model, model_ema, metrics, e)
+            
+            step += 1
         
         # lr_scheduler.step()
     
-    return model, metrics
+    return model, model_ema, metrics
