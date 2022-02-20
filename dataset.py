@@ -78,7 +78,11 @@ def get_dataset(args):
   data_sp, target_sp, data_unsp, target_unsp = selectData(train_ds, args)
 
   ### Val
-  data_val = val_ds.data.reshape(len(val_ds.data), -1).float()
+  if args.base_model == "fc":
+    data_val = val_ds.data.reshape(len(val_ds.data), -1).float()
+  else:
+    data_val = val_ds.data.unsqueeze(1).float()
+  
   target_val = val_ds.targets.long()
 
   # pre-process (normalize to [0,1])
@@ -116,9 +120,9 @@ def get_loader(args, seed=2022):
   return train_loader_unsp, train_loader_sp, val_loader
 
 
-if __name__ == "__main__":
-    from main import get_args
-    args = get_args()
+# if __name__ == "__main__":
+#     from main import get_args
+#     args = get_args()
     
-    train_ds_unsp, train_ds_sp, val_ds = get_dataset(args)
-    train_loader_unsp, train_loader_sp, val_loader = get_loader(args)
+#     train_ds_unsp, train_ds_sp, val_ds = get_dataset(args)
+#     train_loader_unsp, train_loader_sp, val_loader = get_loader(args)

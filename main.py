@@ -1,7 +1,7 @@
 
 import os
 try:
-    os.chdir("./workspace/research/repo")
+    os.chdir("./workspace/research/repo/zzh_dev")
 except:
     pass
 
