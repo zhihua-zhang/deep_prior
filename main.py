@@ -35,11 +35,13 @@ def get_args(args=None):
                              help="base learning rate")
     model_group.add_argument("--weight_decay", type=float, default=1e-5,
                              help="l2 weight decay")
-    model_group.add_argument("--n_sp", type=int, default=500,
+    model_group.add_argument("--n_sp", type=int, default=10,
                              help="number of supervised samples per class")
+    model_group.add_argument("--use_augment", type=int, default=1,
+                             help="Use data augmentation or not'")
     model_group.add_argument("--target_comb", type=str, default="cross_product",
                              help="combination of possible targets: 'cross_product' or 'permutations'")
-    model_group.add_argument("--base_model", type=str, default="fc",
+    model_group.add_argument("--base_model", type=str, default="cnn",
                              help="the type of base model: 'fc' or 'cnn'")
     model_group.add_argument("--lr_scheduler", type=list, default=[10, 20, 25],
                              help="lr scheduler")
@@ -65,6 +67,7 @@ if __name__ == "__main__":
     print(f"K: {args.K}")
     print(f"alpha: {args.alpha}")
     print(f"gamma: {args.gamma}")
+    print(f"n_sp: {args.n_sp}")
     print(f"sp batch size: {args.bz_sp}")
     print(f"learning rate: {args.base_lr}")
     print(f"weight decay: {args.weight_decay}")
@@ -72,6 +75,7 @@ if __name__ == "__main__":
     print(f"ema decay rate {args.ema_decay_rate}")
     print(f"target_comb {args.target_comb}")
     print(f"base_model {args.base_model}")
+    print(f"use data augmentation {args.use_augment}")
     print("="*28)
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -79,7 +83,6 @@ if __name__ == "__main__":
     ###############################################################################
     # (a) Load data & Preprocess
     ###############################################################################
-    args.base_model = 'cnn'
     train_loader_unsp, train_loader_sp, val_loader = get_loader(args)
 
 

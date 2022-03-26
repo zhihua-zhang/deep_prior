@@ -9,6 +9,7 @@ import torch.nn.functional as F
 ###############################################################################
 
 def selectData(ds, args):
+    torch.manual_seed(2022)
     n_sp = args.n_sp
     data_unsp_all = []
     data_sp_all = []
@@ -16,6 +17,7 @@ def selectData(ds, args):
       loc = ds.targets == digit
       data, target = map(lambda x: x[loc], [ds.data, ds.targets])
 
+      # fix n_sp samples across all experiments
       data_sp_all.append([data[:n_sp], target[:n_sp]])
       data_unsp_all.append([data[n_sp:], target[n_sp:]])
 
@@ -45,7 +47,7 @@ def random_shuffle(data, target, seed=2022):
     return data, target
 
 class myDataset(torch.utils.data.Dataset):
-  def __init__(self, images, labels, transform=None):
+  def __init__(self, images, labels):
     super().__init__()
     
     self.images = images
@@ -62,14 +64,14 @@ class myDataset(torch.utils.data.Dataset):
 def get_dataset(args):
   train_ds = torchvision.datasets.MNIST(root="../data/training.pt",
                                    train=True,
-                                   download=True,
+                                   download=False,
                                    transform=T.Compose([
                                        T.PILToTensor(),
                                    ]))
 
   val_ds = torchvision.datasets.MNIST(root="../data/validation.pt",
                                     train=False,
-                                    download=True,
+                                    download=False,
                                     transform=T.Compose([
                                         T.PILToTensor()
                                     ]))  

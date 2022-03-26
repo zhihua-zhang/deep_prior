@@ -1,30 +1,27 @@
 from re import A
 import torch
 from torch import nn
-from utils import save_results
+from utils import default_transform, save_results
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-def evaluate_sp(model, val_loader):
+def evaluate_sp(model, loader):
     model.eval()
-    
     with torch.no_grad():
         n_total = 0
         correct = 0
-        for data_sp, targets in val_loader:
+        for data_sp, targets in loader:
             data_sp, targets = map(lambda x: x.to(device), [data_sp, targets])
             out_sp = model(data_sp)
             pred = out_sp.argmax(dim=1)
             correct += (pred.flatten() == targets.flatten()).sum().item()
             n_total += len(targets)
         
-        val_acc = correct / n_total
-    
-    return val_acc
+        acc = correct / n_total
+    return acc
 
 def evaluate(model, train_loader_sp, val_loader):
     model.eval()
-    
     with torch.no_grad():
         logLikelihood_sp = torch.zeros(len(model.deep_priors), device=device)
         sp_cnt = 0
@@ -61,7 +58,6 @@ def evaluate(model, train_loader_sp, val_loader):
             n_total += len(targets)
         
         val_acc = correct / n_total
-    
     return train_acc, val_acc
 
 def train(model, model_sp, model_ema, optimizer, optimizer_sp, args, train_loader_unsp, train_loader_sp, val_loader):
@@ -69,6 +65,7 @@ def train(model, model_sp, model_ema, optimizer, optimizer_sp, args, train_loade
     epochs = args.epochs
     e_step = args.e_step
     gamma = args.gamma
+    augment = default_transform()
     
     step = 0
     total_steps = epochs * e_step
@@ -80,10 +77,13 @@ def train(model, model_sp, model_ema, optimizer, optimizer_sp, args, train_loade
             "objective": [],
             "MI": [],
             "logLikelihood": [],
+            "sp_logLikelihood": [],
             "acc": [],
+            "sp_acc": []
         },
         "val": {
             "acc": [],
+            "sp_acc": [],
             "ema_acc": [],
         }
     }
@@ -100,8 +100,9 @@ def train(model, model_sp, model_ema, optimizer, optimizer_sp, args, train_loade
             data_sp, targets = next(iter(train_loader_sp))
 
             # apply data augmentation
-            with torch.no_grad():
-                data_unsp, data_sp = map(model.augment, [data_unsp, data_sp])
+            if args.use_augment:
+                with torch.no_grad():
+                    data_unsp, data_sp = map(augment, [data_unsp, data_sp])
 
             # move to device
             data_unsp, data_sp, targets = map(lambda x: x.to(device), [data_unsp, data_sp, targets])
@@ -134,6 +135,7 @@ def train(model, model_sp, model_ema, optimizer, optimizer_sp, args, train_loade
             metrics["train"]["MI"].append(MI.item())
             metrics["train"]["logLikelihood"].append(logLikelihood.item())
             metrics["train"]["objective"].append(objective.item())
+            metrics["train"]["sp_logLikelihood"].append(logLikelihood2.item())
 
             # verbose
             if (step+1) % report_freq == 0:
@@ -148,23 +150,25 @@ def train(model, model_sp, model_ema, optimizer, optimizer_sp, args, train_loade
         # evaluation
         if (e+1) % eval_freq == 0:
             train_acc, val_acc = evaluate(model, train_loader_sp, val_loader)
+            train_sp_acc = evaluate_sp(model_sp, train_loader_sp)
+            val_sp_acc = evaluate_sp(model_sp, val_loader)
             _, val_ema_acc = evaluate(model_ema, train_loader_sp, val_loader)
             metrics["train"]["acc"].append(train_acc)
             metrics["val"]["acc"].append(val_acc)
+            metrics["train"]["sp_acc"].append(train_sp_acc)
+            metrics["val"]["sp_acc"].append(val_sp_acc)
             metrics["val"]["ema_acc"].append(val_ema_acc)
             
             # verbose
             print("Epoch {}, Step {}/{}, train acc: {:.4f}, val acc: {:.4f}, val ema acc: {:.4f}".format(
                 e+1, step+1, total_steps, train_acc, val_acc, val_ema_acc))
 
-            val_acc_sp = evaluate_sp(model_sp, val_loader)
-            
             # verbose
-            print("(sp only) Epoch {}, Step {}/{}, val acc: {:.4f}".format(
-                e+1, step+1, total_steps, val_acc_sp))
+            print("(sp only) Epoch {}, Step {}/{}, train acc: {:.4f}, val acc: {:.4f}".format(
+                e+1, step+1, total_steps, train_sp_acc, val_sp_acc))
     
         if (e+1) % args.save_freq == 0:
-            save_results(model, model_ema, metrics, e+1)
+            save_results(model, model_ema, metrics, e+1, args)
             
         # lr_scheduler.step()
     

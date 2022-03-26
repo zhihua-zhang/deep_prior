@@ -90,8 +90,6 @@ def build_BaseModel(in_dim, out_dim, hidden_dims, args):
 class DeepPrior(nn.Module):
     def __init__(self, in_dim, out_dim, hidden_dims, args):
         super().__init__()
-        self.augment = weak_augmentation()
-        
         self.deep_priors = nn.ModuleList([build_BaseModel(in_dim, out_dim, hidden_dims, args) for _ in range(args.K)])
         self.n_order = args.n_order
         self.K = args.K
@@ -109,32 +107,34 @@ class DeepPrior(nn.Module):
     def get_MI(self, out_unsp):
         """
         Input
-            out_unsp: (bz,n_target,K)
+            out_unsp: (bz,n_label,K)
 
-            For each data pair, there are n_target^n_order combinations in total,
+            For each data pair, there are n_label^n_order combinations in total,
         so we use itertools to obtain per-particle cross product.
         """
 
-        bz, n_target, K = out_unsp.size()
-        out_unsp = out_unsp.reshape(self.n_order, bz//self.n_order, n_target, K)
+        bz, n_label, K = out_unsp.size()
+        out_unsp = out_unsp.reshape(self.n_order, bz//self.n_order, n_label, K)
         out_unsp = out_unsp.permute(0, 2, 3, 1)
         if self.args.target_comb == "cross_product":
-            combinations = list(itertools.product(*out_unsp))
+            indices = torch.tensor([[d1, d2] for d1 in range(self.n_order) for d2 in range(n_label)])
+            # combinations = list(itertools.product(*out_unsp))
         elif self.args.target_comb == "permutations":
-            permutations = list(itertools.permutations(range(n_target), r=self.n_order))
-            combinations = [[out_unsp[i][target] for i, target in enumerate(permute)] for permute in permutations]
-        del out_unsp
+            indices = list(itertools.permutations(range(n_label), r=self.n_order))
+            # combinations = [[out_unsp[i][target] for i, target in enumerate(permute)] for permute in permutations]
         
         prob_all = []
-        for pair in combinations:
-            prob = torch.stack(pair).prod(dim=0)
+        for idx in indices:
+            pair = out_unsp[range(self.n_order), idx]
+            # prob = torch.stack(pair).prod(dim=0)
+            prob = pair.prod(dim=0)
             prob_all.append(prob)
-        del combinations
+        del out_unsp
         
-        # prob_all: (n_target^n_order, K, bz//n_order)
+        # prob_all: (n_label^n_order, K, bz//n_order)
         prob_all = torch.stack(prob_all) + 1e-7
         
-        # prob_per_y: (n_target^n_order, bz//n_order)
+        # prob_per_y: (n_label^n_order, bz//n_order)
         prob_per_y = prob_all.mean(dim=1)
         H_y = (-prob_per_y * torch.log(prob_per_y)).sum()
 
@@ -145,7 +145,7 @@ class DeepPrior(nn.Module):
 
     def get_logLikelihood(self, out_sp, targets):
         """
-        out_unsp: (bz,n_target,K)
+        out_unsp: (bz,n_label,K)
         """
         prob = out_sp[range(len(out_sp)), targets.flatten()]
         logLikelihood = torch.mean(torch.log(prob).sum(dim=0))
