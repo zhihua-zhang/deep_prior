@@ -1,125 +1,91 @@
+
+import os
+import re
+import numpy as np
+from PIL import Image
 import torch
 
-import torchvision
-import torchvision.transforms as T
-import torch.nn.functional as F
+from torchvision import datasets
+
+from utils import transform_train_sp, transform_train_unsp_weak, transform_train_unsp_strong, transform_val
 
 ###############################################################################
 # (a) Load data & Preprocess
 ###############################################################################
 
-def selectData(ds, args):
-    torch.manual_seed(2022)
-    n_sp = args.n_sp
-    data_unsp_all = []
-    data_sp_all = []
-    for digit in range(10):
-      loc = ds.targets == digit
-      data, target = map(lambda x: x[loc], [ds.data, ds.targets])
 
-      # fix n_sp samples across all experiments
-      data_sp_all.append([data[:n_sp], target[:n_sp]])
-      data_unsp_all.append([data[n_sp:], target[n_sp:]])
+class CIFAR10SSL(datasets.CIFAR10):
+    def __init__(self, root, train=True,
+                transform=None, target_transform=None,
+                download=False):
+        super().__init__(root, train=train,
+                          transform=transform,
+                          target_transform=target_transform,
+                          download=download)
 
-    data_sp, target_sp = map(torch.cat, zip(*data_sp_all))
-    data_unsp, target_unsp = map(torch.cat, zip(*data_unsp_all))
+    def __getitem__(self, idx):
+        img, target = self.data[idx], self.targets[idx]
+        img = Image.fromarray(img)
 
-    if args.base_model == "fc":
-      data_sp, data_unsp = map(lambda x: x.reshape(len(x), -1).float(), [data_sp, data_unsp])
-    else:
-      data_sp, data_unsp = map(lambda x: x.unsqueeze(1).float(), [data_sp, data_unsp])
-    target_sp, target_unsp = map(lambda x: x.long(), [target_sp, target_unsp])
-      
-    return data_sp, target_sp, data_unsp, target_unsp
+        if self.transform is not None:
+            img = self.transform(img)
 
-def normalize(data):
-    data = data / 255.
-    # data = (data - 0.5) / 0.5
-    return data
+        if self.target_transform is not None:
+            target = self.target_transform(target)
 
-def preprocess(data):
-    data = normalize(data)
-    return data
+        return img, target
   
-def random_shuffle(data, target, seed=2022):
-    idx = torch.randperm(len(data))
-    data, target = map(lambda x: x[idx], [data, target])
-    return data, target
+class transform_unsp(object):
+    def __init__(self, transform_unsp_weak, transform_unsp_strong):
+        self.weak = transform_unsp_weak
+        self.strong = transform_unsp_strong
 
-class myDataset(torch.utils.data.Dataset):
-  def __init__(self, images, labels):
-    super().__init__()
-    
-    self.images = images
-    self.labels = labels
-  
-  def __len__(self):
-    return len(self.images)
-
-  def __getitem__(self, idx):
-    image = self.images[idx]
-    label = self.labels[idx]
-    return image, label
-
-def get_dataset(args):
-  train_ds = torchvision.datasets.MNIST(root="../data/training.pt",
-                                   train=True,
-                                   download=False,
-                                   transform=T.Compose([
-                                       T.PILToTensor(),
-                                   ]))
-
-  val_ds = torchvision.datasets.MNIST(root="../data/validation.pt",
-                                    train=False,
-                                    download=False,
-                                    transform=T.Compose([
-                                        T.PILToTensor()
-                                    ]))  
-  ### Train
-  # sp /unsp dataset
-  data_sp, target_sp, data_unsp, target_unsp = selectData(train_ds, args)
-
-  ### Val
-  if args.base_model == "fc":
-    data_val = val_ds.data.reshape(len(val_ds.data), -1).float()
-  else:
-    data_val = val_ds.data.unsqueeze(1).float()
-  
-  target_val = val_ds.targets.long()
-
-  # pre-process (normalize to [0,1])
-  data_sp, data_unsp, data_val = map(preprocess, [data_sp, data_unsp, data_val])
-  
-  # random shuffle
-  data_unsp, target_unsp = random_shuffle(data_unsp, target_unsp)
-  data_sp, target_sp = random_shuffle(data_sp, target_sp)
-  
-  train_ds_unsp = myDataset(data_unsp, target_unsp)
-  train_ds_sp = myDataset(data_sp, target_sp)
-  val_ds = myDataset(data_val, target_val)
-  return train_ds_unsp, train_ds_sp, val_ds
+    def __call__(self, x):
+        weak = self.weak(x)
+        strong = self.strong(x)
+        return weak, strong
 
 def get_loader(args, seed=2022):
-  torch.manual_seed(seed)
-  
-  n_order = args.n_order
-  bz_sp = args.bz_sp
-  bz_unsp = 7 * bz_sp
-  assert bz_unsp % n_order == 0, f"bz_unsp:{bz_unsp}, n_order:{n_order} - unsupervised batch size is not a multiple of n_order"
-  
-  train_ds_unsp, train_ds_sp, val_ds = get_dataset(args)
+    torch.manual_seed(seed)
+    
+    n_order = args.n_order
+    bz_sp = args.bz_sp
+    bz_unsp = 7 * bz_sp
+    assert bz_unsp % n_order == 0, f"bz_unsp:{bz_unsp}, n_order:{n_order} - unsupervised batch size is not a multiple of n_order"
+    
+    train_data_sp = CIFAR10SSL(root="data/cifar10", train=True, transform=transform_train_sp(args))
+    train_data_unsp = CIFAR10SSL(root="data/cifar10", train=True, transform=transform_unsp(transform_train_unsp_weak(args), transform_train_unsp_strong(args)))
+    val_data = CIFAR10SSL(root="data/cifar10", train=False, transform=transform_val(args), download=False)
+    
+    labels = np.array(train_data_sp.targets)
+    rng = np.random.default_rng(args.seed)
+    label_idx = []
+    for t in args.tasks:
+        loc = np.where(labels == t)[0]
 
-  train_loader_unsp = torch.utils.data.DataLoader(train_ds_unsp, batch_size=bz_unsp, shuffle=True)
-  train_loader_sp = torch.utils.data.DataLoader(train_ds_sp, batch_size=bz_sp, shuffle=True)
-  val_loader = torch.utils.data.DataLoader(val_ds, batch_size=64, shuffle=False)
+        ### fix for comparison, random for report? ###
+        loc = loc[:args.n_sp]
+        # loc = rng.choice(loc, args.n_sp, False)
+        label_idx.append(loc)
+    label_idx = np.hstack(label_idx)
+    assert len(label_idx) == (len(args.tasks) * args.n_sp)
+    
+    train_data_sp.data = train_data_sp.data[label_idx]
+    train_data_sp.targets = np.array(train_data_sp.targets)[label_idx]
+    # train_data_sp.targets = (np.array(train_data_sp.targets)[indexs] == 3).astype(int)
+    
+    train_loader_sp = torch.utils.data.DataLoader(train_data_sp, batch_size=bz_sp, shuffle=True, num_workers=args.num_workers)
+    train_loader_unsp = torch.utils.data.DataLoader(train_data_unsp, batch_size=bz_unsp, shuffle=True, num_workers=args.num_workers)
+    val_loader = torch.utils.data.DataLoader(val_data, batch_size=64, shuffle=False, num_workers=args.num_workers)
 
-  print("train dataset(unsupervise) n_sample:{n_sample}, shape:{shape}".format(n_sample=len(train_ds_unsp), shape=train_ds_unsp[0][0].shape))
-  print("train dataset(supervise)   n_sample:{n_sample}, shape:{shape}".format(n_sample=len(train_ds_sp), shape=train_ds_sp[0][0].shape))
-  print("val   dataset n_sample:{n_sample}, shape:{shape}".format(n_sample=len(val_ds), shape=val_ds[0][0].shape))
-  print("train loader(unsupervise) bz:{bz}".format(bz=bz_unsp))
-  print("train loader(supervise)   bz:{bz}".format(bz=bz_sp))
-  print("val   loader bz:{bz}".format(bz=bz_sp))
-  return train_loader_unsp, train_loader_sp, val_loader
+    print("train dataset(unsupervise) n_sample:{n_sample}, shape:{shape}".format(n_sample=len(train_data_sp), shape=train_data_sp.data.shape))
+    print("train dataset(supervise)   n_sample:{n_sample}, shape:{shape}".format(n_sample=len(train_data_unsp), shape=train_data_unsp.data.shape))
+    print("val   dataset n_sample:{n_sample}, shape:{shape}".format(n_sample=len(val_data), shape=val_data.data.shape))
+    print("train loader(unsupervise) bz:{bz}".format(bz=bz_unsp))
+    print("train loader(supervise)   bz:{bz}".format(bz=bz_sp))
+    print("val   loader bz:{bz}".format(bz=bz_sp))
+    print("="*28)
+    return train_loader_sp, train_loader_unsp, val_loader
 
 
 # if __name__ == "__main__":
