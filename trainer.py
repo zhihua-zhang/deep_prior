@@ -1,5 +1,6 @@
 from re import A
-import time
+import time, os, json
+from collections import defaultdict
 import torch
 from torch import nn
 from utils import mixup_batch, save_results
@@ -84,29 +85,31 @@ def evaluate_bayes(model, train_loader_sp, val_loader, use_ema=False):
 
 def train(model, optimizer, scheduler, scaler, args,
         train_loader_sp, train_loader_unsp, val_loader):
+
+    start_epoch = 0
+    if args.reload_dir != "":
+        start_epoch = int(args.reload_dir.split("epoch=")[-1])
+    
+    best_val_acc = 0.
+    if start_epoch > 0:
+        model.load_state_dict(torch.load(os.path.join(args.reload_dir, "checkpoint.pth")))
+        # for i in range(model.args.K):
+        #     model.model.particles[i] = model.model.particles[i].to(model.model.devices[i], non_blocking=True)
+        #     model.ema_model.particles[i] = model.ema_model.particles[i].to(model.model.devices[i], non_blocking=True)
+        
+        optimizer.load_state_dict(torch.load(os.path.join(args.reload_dir, "optimizer.pth")))
+        scheduler.load_state_dict(torch.load(os.path.join(args.reload_dir, "scheduler.pth")))
+        with open(os.path.join(args.reload_dir, "metrics.json"), "r") as f:
+            metrics = json.load(f)
+            best_val_acc = metrics["val"]["acc"][-1]
     
     e_loader_step = args.e_step
     report_freq = 100
     eval_freq = 1
 
-    metrics = {
-        "train": {
-            "loss": [],
-            "MI": [],
-            "ce_loss": [],
-            "entropy": [],
-            "acc": [],
-            "ema_acc": [],
-        },
-        "val": {
-            "acc": [],
-            "acc_np": [],
-            "ema_acc": [],
-            "ema_acc_np": [],
-            "bayes_acc": [],
-            "bayes_ema_acc": [],
-        }
-    }
+    train_metrics = defaultdict(list)
+    val_metrics = defaultdict(list)
+    metrics = {"train": train_metrics, "val": val_metrics}
 
     # evaluation
     train_acc, bayes_val_acc = evaluate_bayes(model, train_loader_sp, val_loader)
@@ -126,7 +129,7 @@ def train(model, optimizer, scheduler, scaler, args,
     H_y_run, H_yw_run = 0.0, 0.0
     entropy_run, mask_run = 0.0, 0.0
     t0 = time.time()
-    for e in range(args.run_epochs):
+    for e in range(start_epoch, args.run_epochs):
         _ = model.train()
 
         sp_loader_iter = iter(train_loader_sp)
@@ -153,7 +156,6 @@ def train(model, optimizer, scheduler, scaler, args,
                 data_unsp_s, _ = mixup_batch(data_unsp_s, _, args)
             
             with torch.cuda.amp.autocast():
-            # with torch.no_grad():
                 ### deep prior MI ###
                 out = model(torch.cat([data_sp, data_unsp_w, data_unsp_s]))
                 out_sp, out_unsp = out[ : len(data_sp)], out[len(data_sp) : ]
@@ -233,160 +235,8 @@ def train(model, optimizer, scheduler, scaler, args,
             metrics["val"]["bayes_acc"].append(bayes_val_acc)
             metrics["val"]["bayes_ema_acc"].append(bayes_val_ema_acc)
             
-        if (e+1) % args.save_freq == 0:
-            save_results(model, metrics, e+1, args)
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            save_results(model, optimizer, scheduler, metrics, e+1, args)
         
     return model, metrics
-
-
-def train_sp(model, model_sp, model_ema,
-        optimizer, optimizer_sp, scheduler, scheduler_sp, scaler, scaler_sp,
-        args, train_loader_sp, train_loader_unsp, val_loader):
-    
-    device = model.main_device
-    e_loader_step = args.e_step
-    report_freq = 100
-    eval_freq = 1
-    sp_update_bz = 64
-
-    metrics = {
-        "train": {
-            "objective": [],
-            "MI": [],
-            "logLikelihood": [],
-            "sp_logLikelihood": [],
-            "acc": [],
-            "sp_acc": []
-        },
-        "val": {
-            "acc": [],
-            "sp_acc": [],
-            "ema_acc": [],
-        }
-    }
-
-    t0 = time.time()
-    for e in range(args.epochs):
-        _ = model.train()
-        _ = model_sp.train()
-        scheduler_status = "normal" if e >= args.e_warmup else "warmup"
-
-        # read data
-        t1 = time.time()
-        for step in range(e_loader_step):
-            ### deep prior MI ###
-            MI = torch.zeros(1, device=device)
-            cnt = 0
-            while cnt < 7 * sp_update_bz:
-                data_unsp, _ = next(iter(train_loader_unsp))
-                data_unsp_w, data_unsp_s = data_unsp
-                
-                # use mixed-precision to speed up
-                with torch.cuda.amp.autocast():
-                    out_unsp_w = model(data_unsp_w)
-                    out_unsp_s = model(data_unsp_s)
-                    MI = MI + model.get_MI(out_unsp_w, out_unsp_s)
-                cnt += len(data_unsp_w)
-            
-            cnt1 = cnt
-            MI = MI / (cnt1 / args.n_order)
-
-            ### log-likelihood ###
-            logLikelihood = torch.zeros(1, device=device)
-            logLikelihood_sp = torch.zeros(1, device=device)
-            cnt = 0
-            while cnt < sp_update_bz:
-                data_sp, targets = next(iter(train_loader_sp))
-
-                # use mixed-precision to speed up
-                with torch.cuda.amp.autocast():
-                    out_sp = model(data_sp)
-                    logLikelihood = logLikelihood + model.get_logLikelihood(out_sp, targets)
-                    
-                    ### supervise only  ###
-                    out_sp2 = model_sp(data_sp)
-                    prob_sp = out_sp2[range(len(out_sp2)), targets.flatten()]
-                    logLikelihood_sp = logLikelihood_sp + torch.log(prob_sp).sum()
-                    
-                cnt += len(data_sp)
-
-            cnt2 = cnt
-            logLikelihood = logLikelihood / cnt2
-            logLikelihood_sp = logLikelihood_sp / cnt2
-
-            ### update ###
-            ### semi
-            optimizer.zero_grad()
-            loss = -(args.gamma * MI + logLikelihood)
-            # loss.backward()
-            # optimizer.step()
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            
-            scale = scaler.get_scale()
-            scaler.update()
-            is_step_skipped = scale > scaler.get_scale()
-            # if not is_step_skipped:
-            #     scheduler[scheduler_status].step()
-            
-            ### sp only
-            optimizer_sp.zero_grad()
-            loss_sp = -logLikelihood_sp
-            # loss_sp.backward()
-            # optimizer_sp.step()
-            scaler_sp.scale(loss_sp).backward()
-            scaler_sp.step(optimizer_sp)
-
-            scale_sp = scaler_sp.get_scale()
-            scaler_sp.update()
-            is_step_skipped = scale_sp > scaler_sp.get_scale()
-            # if not is_step_skipped:
-            #     scheduler_sp[scheduler_status].step()
-            ### --------------- ###
-            
-            metrics["train"]["MI"].append(MI.item())
-            metrics["train"]["logLikelihood"].append(logLikelihood.item())
-            metrics["train"]["objective"].append(-loss.item())
-            metrics["train"]["sp_logLikelihood"].append(logLikelihood_sp.item())
-
-            # verbose
-            if (step+1) % report_freq == 0:
-                print("Step {}/{}, obj: {:.4f}, MI: {:.4f}, log_likelihood: {:.4f}".format(
-                    step+1, args.e_step, -loss.item(), MI.item(), logLikelihood.item()))
-
-        # EMA weight update
-        if model_ema:
-            model_ema.update(model)
-
-        # evaluation
-        if (e+1) % eval_freq == 0:
-            train_acc = evaluate(model, train_loader_sp)
-            val_acc = evaluate(model, val_loader)
-            train_acc_bayes, val_ac_bayes = evaluate_bayes(model, train_loader_sp, val_loader)
-            train_sp_acc = evaluate_sp(model_sp, train_loader_sp)
-            val_sp_acc = evaluate_sp(model_sp, val_loader)
-            if model_ema:
-                _, val_ema_acc = evaluate_bayes(model_ema, train_loader_sp, val_loader)
-            metrics["train"]["acc"].append(train_acc)
-            metrics["val"]["acc"].append(val_acc)
-            metrics["train"]["sp_acc"].append(train_sp_acc)
-            metrics["val"]["sp_acc"].append(val_sp_acc)
-            if model_ema:
-                metrics["val"]["ema_acc"].append(val_ema_acc)
-            
-            # verbose
-            print("Epoch {}/{}, lr:{:.4f}".format(e+1, args.epochs, scheduler[scheduler_status].get_last_lr()[0]))
-            print("(unsp)       train acc: {:.4f}, val acc: {:.4f}".format(
-                train_acc, val_acc))
-            print("(unsp-bayes) train acc: {:.4f}, val acc: {:.4f}".format(
-                train_acc_bayes, val_ac_bayes))
-            print("(sp)         train acc: {:.4f}, val acc: {:.4f}".format(
-                train_sp_acc, val_sp_acc))
-            
-            t2 = time.time()
-            print("e_time: {:.2f}min, total_time: {:.2f}min".format((t2 - t1)/60, (t2 - t0)/60))
-    
-        if (e+1) % args.save_freq == 0:
-            save_results(model, model_ema, metrics, e+1, args)
-        
-    return model, model_ema, metrics

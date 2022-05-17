@@ -48,18 +48,20 @@ def get_args(args=None):
                              help="mixup alpha")
     model_group.add_argument("--e_step", type=int, default=1024,
                              help="number of steps per epoch")
-    model_group.add_argument("--epochs", type=int, default=1024,
+    model_group.add_argument("--epochs", type=int, default=100,
                              help="number of epochs")
     model_group.add_argument("--run_epochs", type=int, default=50,
                              help="number of epochs to actually run")
     model_group.add_argument("--e_warmup", type=int, default=0,
                              help="number of warmup epochs")
-    model_group.add_argument("--main_device", type=int, default=0,
+    model_group.add_argument("--main_device", type=int, default=3,
                              help="main cuda device")
-    model_group.add_argument("--save_freq", type=int, default=5,
-                             help="frequency of model saving")
-    model_group.add_argument("--model_pth", type=str, default="",
-                             help="reload model path")
+    model_group.add_argument("--skip_devices", type=list, default=[],
+                             help="unavailable cuda device list")
+    model_group.add_argument("--save_prefix", type=str, default="",
+                             help="path prefix when saving models")
+    model_group.add_argument("--reload_dir", type=str, default="",
+                             help="reload model dir")
 
     if args is None:
         args = parser.parse_args()
@@ -72,7 +74,10 @@ if __name__ == "__main__":
     args = get_args()
     args.gamma = 1 / (1 - args.tau**2)
     args.ema_decay_rate = 1 / args.epochs
-    
+    args.skip_devices = [int(d) for d in args.skip_devices]
+
+    print(args.skip_devices)
+
     print("="*28)
     print(f"n_order: {args.n_order}")
     print(f"K: {args.K}")
@@ -119,7 +124,7 @@ if __name__ == "__main__":
     ###############################################################################
     # (c) Train reference priorG
     ###############################################################################
-
+    
     lr = args.K * args.base_lr
     weight_decay = 5 / args.K * args.weight_decay
     optimizer = torch.optim.SGD(model.get_opt_params(wd=weight_decay), lr=lr, momentum=0.9, nesterov=True)
@@ -131,8 +136,8 @@ if __name__ == "__main__":
             if current_step < num_warmup_steps:
                 return float(current_step) / float(max(1, num_warmup_steps))
             no_progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-            return max(0., math.cos(math.pi * num_cycles * no_progress))
-            # return 0.5 * (1 + math.cos(math.pi * no_progress))
+            # return max(0., math.cos(math.pi * num_cycles * no_progress))
+            return 0.5 * (1 + math.cos(math.pi * no_progress))
     
         return torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda, last_epoch)
 

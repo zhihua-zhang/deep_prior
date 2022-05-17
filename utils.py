@@ -118,17 +118,30 @@ def report(metrics, epochs, n_report=200):
     fig.savefig("./res.png")
     plt.close('all')
 
-def save_results(model, metrics, epoch, args, prefix=""):
-    suffix = os.path.join(prefix, f"n_sp={args.n_sp}", f"alpha={args.alpha},gamma={args.gamma},K={args.K},order={args.n_order}")
-    checkpoints_dir = os.path.join("checkpoints", suffix)
-    if os.path.exists(checkpoints_dir):
-        os.system(f"rm -rf {checkpoints_dir}")
-    os.makedirs(checkpoints_dir, exist_ok=True)
-    torch.save(model.state_dict(), os.path.join(checkpoints_dir, "epoch={}-acc={:.3f}.pth".format(epoch, metrics["val"]["acc"][-1])))
 
-    logs_dir = os.path.join("logs", suffix)
-    if os.path.exists(logs_dir):
-        os.system(f"rm -rf {logs_dir}")
-    os.makedirs(logs_dir, exist_ok=True)
-    with open(os.path.join(logs_dir, "epoch={}.json".format(epoch)), "w") as f:
+def save_results(model, optimizer, scheduler, metrics, curr_epoch, args):
+    ## save results
+    curr_output_dir = os.path.join("outputs", args.save_prefix, "epoch={}".format(curr_epoch))
+    os.makedirs(curr_output_dir, exist_ok=True)
+    
+    checkpoint_path = os.path.join(curr_output_dir, "checkpoint.pth".format(metrics["val"]["acc"][-1]))
+    torch.save(model.state_dict(), checkpoint_path)
+
+    optimizer_path = os.path.join(curr_output_dir, "optimizer.pth")
+    torch.save(optimizer.state_dict(), optimizer_path)
+
+    scheduler_path = os.path.join(curr_output_dir, "scheduler.pth")
+    torch.save(scheduler.state_dict(), scheduler_path)
+
+    metric_path = os.path.join(curr_output_dir, "metrics.json")
+    with open(metric_path, "w") as f:
         json.dump(metrics, f)
+    
+    args_path = os.path.join(curr_output_dir, "args.json")
+    with open(args_path, "w") as f:
+        json.dump(args.__dict__, f)
+    
+    ## remove old results
+    old_output_dir = os.path.join("outputs", "epoch={}".format(curr_epoch-1))
+    if os.path.exists(old_output_dir):
+        os.system(f"rm -rf {old_output_dir}")

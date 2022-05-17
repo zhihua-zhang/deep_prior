@@ -176,26 +176,30 @@ class DeepPrior(nn.Module):
         self.particles = nn.ModuleList([build_BaseModel(num_classes, n_blocks, args) for _ in range(args.K)])
         self.devices = []
         for i in range(args.K):
-            d = (i + args.main_device) % 3
+            d = (args.main_device + i) % 4
+            while d in args.skip_devices:
+                d = (d+1) % 4
             device = f"cuda:{d}" if torch.cuda.is_available() else "cpu"
             self.particles[i] = self.particles[i].to(device)
             self.particles[i].device = device
             self.devices.append(device)
-        d = args.main_device % 3
+        
+        d = args.main_device
+        while d in args.skip_devices:
+            d = (d+1) % 4
         self.main_device = f"cuda:{d}" if torch.cuda.is_available() else "cpu"
-        # self.prior = torch.tensor([1/self.args.K] * self.args.K, device=self.main_device)
+        
         self.logprior = torch.tensor([0.] * self.args.K, device=self.main_device)
         if args.train_prior:
             self.logprior = nn.Parameter(self.logprior)
     
     def forward(self, x):
-        outs = [net(x.to(self.devices[i], non_blocking=True)) for i, net in enumerate(self.particles)]
-        outs = [pred.to(self.main_device, non_blocking=True) for pred in outs]
+        outs = [net(x.to(self.devices[i])) for i, net in enumerate(self.particles)]
+        outs = [pred.to(self.main_device) for pred in outs]
         outs = torch.stack(outs, dim=2)
         return outs
     
     def get_prior(self):
-        # prior = self.prior
         prior = F.softmax(self.logprior, dim=0)
         return prior
     
@@ -229,7 +233,7 @@ class DeepPrior(nn.Module):
             out_unsp_w: (2*bz,n_label,K)
         """
 
-        # prob_all_avg: (bz//n_order, K, n_label^n_order)
+        # shape: (bz//n_order, K, n_label^n_order)
         prob_all_w, prob_all_s = self.get_all_prob(out_unsp).chunk(2, dim=0)
         
         prior = self.get_prior().reshape(1,-1,1)
@@ -281,14 +285,29 @@ class EmaModel(nn.Module):
         # only use for evaluation
         self.model = model
         self.decay = decay
-        self.ema_model = deepcopy(model)
         self.args = self.model.args
         self.main_device = self.model.main_device
+        self.ema_model = deepcopy(model)
         
         for param in self.ema_model.parameters():
             param.detach_()
         self.ema_model.eval()
-    
+        
+        # self.ema_model.devices = []
+        # for i in range(self.args.K):
+        #     d = (self.args.main_device + 1 + i) % 4
+        #     while d in self.args.skip_devices:
+        #         d = (d+1) % 4
+        #     device = f"cuda:{d}" if torch.cuda.is_available() else "cpu"
+        #     self.ema_model.particles[i] = self.ema_model.particles[i].to(device)
+        #     self.ema_model.particles[i].device = device
+        #     self.ema_model.devices.append(device)
+        # d = self.args.main_device + 1
+        # while d in self.args.skip_devices:
+        #     d = (d+1) % 4
+        # self.ema_model.main_device = f"cuda:{d}" if torch.cuda.is_available() else "cpu"
+        # self.ema_model.logprior = self.ema_model.logprior.to(self.ema_model.main_device)
+        
     @torch.no_grad()
     def update_ema(self):
         ema_model_params = OrderedDict(self.ema_model.named_parameters())

@@ -63,7 +63,7 @@ def get_loader(args, seed=2022):
     for t in args.tasks:
         loc = np.where(labels == t)[0]
 
-        ### fix for comparison, random for report? ###
+        ### fix for comparison? ###
         loc = loc[:args.n_sp]
         # loc = rng.choice(loc, args.n_sp, False)
         label_idx.append(loc)
