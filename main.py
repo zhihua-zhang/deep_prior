@@ -46,6 +46,16 @@ def get_args(args=None):
                              help="if use mixup trick")
     model_group.add_argument("--mixup_alpha", type=float, default=0.75,
                              help="mixup alpha")
+    model_group.add_argument("--no_gradient_stop", type=int, default=0,
+                             help="if stop gradient from weak augment")
+    model_group.add_argument("--label_thresh", type=float, default=0.95,
+                             help="label threshold for weak augment")
+    model_group.add_argument("--no_jensen", type=int, default=0,
+                             help="if use jensen inequality in computing H_yx")
+    model_group.add_argument("--num_ops", type=int, default=2,
+                             help="number of ops in strong augmentation")
+    model_group.add_argument("--magnitude", type=int, default=10,
+                             help="magnitude of ops in strong augmentation")
     model_group.add_argument("--e_step", type=int, default=1024,
                              help="number of steps per epoch")
     model_group.add_argument("--epochs", type=int, default=100,
@@ -97,6 +107,11 @@ if __name__ == "__main__":
     print(f"Hyw_rescale {args.Hyw_rescale}")
     print(f"use_mixup {args.use_mixup}")
     print(f"mixup_alpha {args.mixup_alpha}")
+    print(f"no_gradient_stop {args.no_gradient_stop}")
+    print(f"label_thresh {args.label_thresh}")
+    print(f"no_jensen {args.no_jensen}")
+    print(f"num_ops {args.num_ops}")
+    print(f"magnitude {args.magnitude}")
     print("="*28)
     
     args.num_workers = 4

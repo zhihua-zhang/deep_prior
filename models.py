@@ -230,7 +230,7 @@ class DeepPrior(nn.Module):
     def get_MI(self, out_unsp):
         """
         Input
-            out_unsp_w: (2*bz,n_label,K)
+            out_unsp: (2*bz,n_label,K)
         """
 
         # shape: (bz//n_order, K, n_label^n_order)
@@ -245,17 +245,37 @@ class DeepPrior(nn.Module):
         H_y = (-prob_per_y * torch.log(prob_per_y + 1e-12)).sum(dim=1).mean() / self.args.n_order
 
         if self.args.Hyw_use_order:
-            p_w = prob_all_w.detach()
+            if self.args.no_gradient_stop:
+                p_w = prob_all_w
+            else:
+                p_w = prob_all_w.detach()
             p_s = prob_all_s
-            entropy = (-(self.args.tau * p_w + (1 - self.args.tau) * p_s) * (self.args.tau * torch.log(p_w + 1e-12) + (1 - self.args.tau) * torch.log(p_s + 1e-12))).sum(dim=-1)
+
+            if self.args.no_jensen:
+                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
+                entropy = (-p_avg * torch.log(p_avg + 1e-12)).sum(dim=-1)
+            else:
+                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
+                entropy = (-p_avg * (self.args.tau * torch.log(p_w + 1e-12) + (1 - self.args.tau) * torch.log(p_s + 1e-12))).sum(dim=-1)
+            
             # mask = prob_all_w.max(dim=-1)[0].ge(0.95 ** self.args.n_order)
-            mask = prob_all_w.max(dim=-1)[0].ge(0.95)
+            mask = prob_all_w.max(dim=-1)[0].ge(self.args.label_thresh)
         else:
             out_unsp_w, out_unsp_s = out_unsp.chunk(2, dim=0)
-            p_w = out_unsp_w.detach()
+            if self.args.no_gradient_stop:
+                p_w = out_unsp_w
+            else:
+                p_w = out_unsp_w.detach()
             p_s = out_unsp_s
-            entropy = (-(self.args.tau * p_w + (1 - self.args.tau) * p_s) * (self.args.tau * torch.log(p_w + 1e-12) + (1 - self.args.tau) * torch.log(p_s + 1e-12))).sum(dim=1)
-            mask = p_w.max(dim=1)[0].ge(0.95)
+            
+            if self.args.no_jensen:
+                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
+                entropy = (-p_avg * torch.log(p_avg + 1e-12)).sum(dim=1)
+            else:
+                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
+                entropy = (-p_avg * (self.args.tau * torch.log(p_w + 1e-12) + (1 - self.args.tau) * torch.log(p_s + 1e-12))).sum(dim=1)
+            
+            mask = p_w.max(dim=1)[0].ge(self.args.label_thresh)
         
         prior = prior.reshape(1,-1)
         mask_ratio = mask.sum() / mask.nelement()
@@ -292,21 +312,6 @@ class EmaModel(nn.Module):
         for param in self.ema_model.parameters():
             param.detach_()
         self.ema_model.eval()
-        
-        # self.ema_model.devices = []
-        # for i in range(self.args.K):
-        #     d = (self.args.main_device + 1 + i) % 4
-        #     while d in self.args.skip_devices:
-        #         d = (d+1) % 4
-        #     device = f"cuda:{d}" if torch.cuda.is_available() else "cpu"
-        #     self.ema_model.particles[i] = self.ema_model.particles[i].to(device)
-        #     self.ema_model.particles[i].device = device
-        #     self.ema_model.devices.append(device)
-        # d = self.args.main_device + 1
-        # while d in self.args.skip_devices:
-        #     d = (d+1) % 4
-        # self.ema_model.main_device = f"cuda:{d}" if torch.cuda.is_available() else "cpu"
-        # self.ema_model.logprior = self.ema_model.logprior.to(self.ema_model.main_device)
         
     @torch.no_grad()
     def update_ema(self):

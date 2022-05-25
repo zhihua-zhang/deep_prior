@@ -55,7 +55,7 @@ def transform_train_unsp_strong(args):
         T.RandomCrop(size=32,
                     padding=int(32*0.125),
                     padding_mode='reflect'),
-        T.RandAugment(num_ops=2, magnitude=10),
+        T.RandAugment(num_ops=args.num_ops, magnitude=args.magnitude),
         T.ToTensor(),
         T.Normalize(mean=cifar10_mean, std=cifar10_std)
     ])
@@ -119,9 +119,9 @@ def report(metrics, epochs, n_report=200):
     plt.close('all')
 
 
-def save_results(model, optimizer, scheduler, metrics, curr_epoch, args):
+def save_results(model, optimizer, scheduler, metrics, old_epoch, curr_epoch, args):
     ## save results
-    curr_output_dir = os.path.join("outputs", args.save_prefix, "epoch={}".format(curr_epoch))
+    curr_output_dir = os.path.join("outputs", args.save_prefix, "epoch={}".format(curr_epoch+1))
     os.makedirs(curr_output_dir, exist_ok=True)
     
     checkpoint_path = os.path.join(curr_output_dir, "checkpoint.pth".format(metrics["val"]["acc"][-1]))
@@ -142,6 +142,6 @@ def save_results(model, optimizer, scheduler, metrics, curr_epoch, args):
         json.dump(args.__dict__, f)
     
     ## remove old results
-    old_output_dir = os.path.join("outputs", "epoch={}".format(curr_epoch-1))
+    old_output_dir = os.path.join("outputs", args.save_prefix, "epoch={}".format(old_epoch+1))
     if os.path.exists(old_output_dir):
         os.system(f"rm -rf {old_output_dir}")

@@ -91,6 +91,7 @@ def train(model, optimizer, scheduler, scaler, args,
         start_epoch = int(args.reload_dir.split("epoch=")[-1])
     
     best_val_acc = 0.
+    best_epoch = 0
     if start_epoch > 0:
         model.load_state_dict(torch.load(os.path.join(args.reload_dir, "checkpoint.pth")))
         # for i in range(model.args.K):
@@ -101,7 +102,8 @@ def train(model, optimizer, scheduler, scaler, args,
         scheduler.load_state_dict(torch.load(os.path.join(args.reload_dir, "scheduler.pth")))
         with open(os.path.join(args.reload_dir, "metrics.json"), "r") as f:
             metrics = json.load(f)
-            best_val_acc = metrics["val"]["acc"][-1]
+            best_val_acc = metrics["val"]["ema_acc"][-1]
+            best_epoch = start_epoch
     
     e_loader_step = args.e_step
     report_freq = 100
@@ -225,6 +227,7 @@ def train(model, optimizer, scheduler, scaler, args,
                 train_acc, val_acc, val_acc_np, bayes_val_acc))
             print("(ema) train acc: {:.4f}, val acc: {:.4f}, np val acc: {:.4f}, bayes val acc: {:.4f}".format(
                 train_ema_acc, val_ema_acc, val_ema_acc_np, bayes_val_ema_acc))
+            print("best ema val acc: {:.4f}".format(best_val_acc))
             
             metrics["train"]["acc"].append(train_acc)
             metrics["train"]["ema_acc"].append(train_ema_acc)
@@ -235,8 +238,9 @@ def train(model, optimizer, scheduler, scaler, args,
             metrics["val"]["bayes_acc"].append(bayes_val_acc)
             metrics["val"]["bayes_ema_acc"].append(bayes_val_ema_acc)
             
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            save_results(model, optimizer, scheduler, metrics, e+1, args)
+        if val_ema_acc > best_val_acc:
+            best_val_acc = val_ema_acc
+            save_results(model, optimizer, scheduler, metrics, best_epoch, e, args)
+            best_epoch = e
         
     return model, metrics
