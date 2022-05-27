@@ -281,8 +281,6 @@ class DeepPrior(nn.Module):
         mask_ratio = mask.sum() / mask.nelement()
         
         H_yw = (entropy * prior * mask).sum(dim=1).mean()
-        if self.args.Hyw_rescale and mask_ratio.item() > 0:
-            H_yw = H_yw / mask_ratio
         MI = self.args.alpha * H_y - H_yw
 
         return MI, H_y, H_yw, mask_ratio

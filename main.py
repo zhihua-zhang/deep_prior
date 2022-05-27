@@ -40,8 +40,6 @@ def get_args(args=None):
                              help="use only weak augment when computing H_y")
     model_group.add_argument("--Hyw_use_order", type=int, default=0,
                              help="if use order when computing H_yx")
-    model_group.add_argument("--Hyw_rescale", type=int, default=0,
-                             help="if rescale H_yx by mask_ratio")
     model_group.add_argument("--use_mixup", type=int, default=0,
                              help="if use mixup trick")
     model_group.add_argument("--mixup_alpha", type=float, default=0.75,
@@ -68,6 +66,8 @@ def get_args(args=None):
                              help="main cuda device")
     model_group.add_argument("--skip_devices", type=list, default=[],
                              help="unavailable cuda device list")
+    model_group.add_argument("--eval_particle", type=bool, default=True,
+                             help="if evaluate each particle")
     model_group.add_argument("--save_prefix", type=str, default="",
                              help="path prefix when saving models")
     model_group.add_argument("--reload_dir", type=str, default="",
@@ -104,7 +104,6 @@ if __name__ == "__main__":
     print(f"train_prior {args.train_prior}")
     print(f"Hy_use_weak {args.Hy_use_weak}")
     print(f"Hyw_use_order {args.Hyw_use_order}")
-    print(f"Hyw_rescale {args.Hyw_rescale}")
     print(f"use_mixup {args.use_mixup}")
     print(f"mixup_alpha {args.mixup_alpha}")
     print(f"no_gradient_stop {args.no_gradient_stop}")
@@ -112,6 +111,7 @@ if __name__ == "__main__":
     print(f"no_jensen {args.no_jensen}")
     print(f"num_ops {args.num_ops}")
     print(f"magnitude {args.magnitude}")
+    print(f"eval_particle {args.eval_particle}")
     print("="*28)
     
     args.num_workers = 4
@@ -151,8 +151,7 @@ if __name__ == "__main__":
             if current_step < num_warmup_steps:
                 return float(current_step) / float(max(1, num_warmup_steps))
             no_progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-            # return max(0., math.cos(math.pi * num_cycles * no_progress))
-            return 0.5 * (1 + math.cos(math.pi * no_progress))
+            return max(0., math.cos(math.pi * num_cycles * no_progress))
     
         return torch.optim.lr_scheduler.LambdaLR(optimizer, _lr_lambda, last_epoch)
 

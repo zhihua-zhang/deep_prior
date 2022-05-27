@@ -85,12 +85,14 @@ def mixup_batch(inp, target, args):
     mixed_target = beta_sample * target + (1 - beta_sample) * target[index]
     return mixed_inp, mixed_target
     
-def viz(imgs, dirs="test", name="test.jpg"):
+def viz(imgs, args, dirs="img_viz", aug_type="w"):
     import os
     from torchvision.utils import save_image, make_grid
     os.makedirs(dirs, exist_ok=True)
+    file_name = aug_type + f"_n={args.num_ops}_m={args.magnitude}.jpg"
+    
     nrow = int(len(imgs) ** 0.5)
-    save_image(make_grid(imgs.float(), nrow=nrow, normalize=True), f"{dirs}/{name}")
+    save_image(make_grid(imgs.float(), nrow=nrow, normalize=True), f"{dirs}/{file_name}")
 
 def report(metrics, epochs, n_report=200):
     fig, ax = plt.subplots(1, 2, figsize=(12,5))

@@ -29,16 +29,24 @@ def evaluate(model, loader, use_ema=False):
     prior = model.get_prior(use_ema=use_ema).reshape(1,1,-1)
     n_total = 0
     correct = 0
+    correct_each = [0] * model.args.K
     for data, targets in loader:
         targets = targets.to(device, non_blocking=True)
         
         out = model(data, use_ema=use_ema)
         pred = (out * prior).sum(dim=-1).argmax(dim=1)
         correct += (pred.flatten() == targets.flatten()).sum().item()
+
+        if model.args.eval_particle:
+            for k in range(model.args.K):
+                pred = out[:, :, k].argmax(dim=1)
+                correct_each[k] += (pred.flatten() == targets.flatten()).sum().item()
+            
         n_total += len(targets)
     
     acc = correct / n_total
-    return acc
+    acc_each = [c / n_total for c in correct_each]
+    return acc, acc_each
 
 @torch.no_grad()
 def evaluate_bayes(model, train_loader_sp, val_loader, use_ema=False):
@@ -103,6 +111,7 @@ def train(model, optimizer, scheduler, scaler, args,
         with open(os.path.join(args.reload_dir, "metrics.json"), "r") as f:
             metrics = json.load(f)
             best_val_acc = metrics["val"]["ema_acc"][-1]
+            
             best_epoch = start_epoch
     
     e_loader_step = args.e_step
@@ -114,18 +123,20 @@ def train(model, optimizer, scheduler, scaler, args,
     metrics = {"train": train_metrics, "val": val_metrics}
 
     # evaluation
-    train_acc, bayes_val_acc = evaluate_bayes(model, train_loader_sp, val_loader)
-    val_acc = evaluate(model, val_loader)
-    val_acc_np = evaluate_noprior(model, val_loader)
-    train_ema_acc, bayes_val_ema_acc = evaluate_bayes(model, train_loader_sp, val_loader, use_ema=True)
-    val_ema_acc = evaluate(model, val_loader, use_ema=True)
-    val_ema_acc_np = evaluate_noprior(model, val_loader, use_ema=True)
+    train_acc, train_acc_each = evaluate(model, train_loader_sp)
+    val_acc, val_acc_each = evaluate(model, val_loader)
+    train_ema_acc, train_ema_acc_each = evaluate(model, train_loader_sp, use_ema=True)
+    val_ema_acc, val_ema_acc_each = evaluate(model, val_loader, use_ema=True)
     
     print("Epoch {}/{}, lr:{:.4f}".format(0, args.epochs, scheduler.get_last_lr()[0]))
-    print("      train acc: {:.4f}, val acc: {:.4f}, np val acc: {:.4f}, bayes val acc: {:.4f}".format(
-        train_acc, val_acc, val_acc_np, bayes_val_acc))
-    print("(ema) train acc: {:.4f}, val acc: {:.4f}, np val acc: {:.4f}, bayes val acc: {:.4f}".format(
-        train_ema_acc, val_ema_acc, val_ema_acc_np, bayes_val_ema_acc))
+    m = f"      train acc: {train_acc:.4f}, val acc: {val_acc:.4f}"
+    for k in range(args.K):
+        m += f", val acc {k}: {val_acc_each[k]:.4f}"
+    print(m)
+    m = f"(ema) train acc: {train_ema_acc:.4f}, val acc: {val_ema_acc:.4f}"
+    for k in range(args.K):
+        m += f", val acc {k}: {val_ema_acc_each[k]:.4f}"
+    print(m)
     
     mi_run, ce_run, loss_run = 0.0, 0.0, 0.0
     H_y_run, H_yw_run = 0.0, 0.0
@@ -213,34 +224,35 @@ def train(model, optimizer, scheduler, scaler, args,
         print("(accumu) mi:{:.4f}, ce_loss:{:.4f}, loss:{:.4f}, H_y:{:.4f}, H_yw:{:.4f}, entropy:{:.4f}, mask_ratio:{:.4f}".format(
             mi_run, ce_run, loss_run, H_y_run, H_yw_run, entropy_run, mask_run))
 
-        # evaluation
         if (e+1) % eval_freq == 0:
-            train_acc, bayes_val_acc = evaluate_bayes(model, train_loader_sp, val_loader)
-            val_acc = evaluate(model, val_loader)
-            val_acc_np = evaluate_noprior(model, val_loader)
-            train_ema_acc, bayes_val_ema_acc = evaluate_bayes(model, train_loader_sp, val_loader, use_ema=True)
-            val_ema_acc = evaluate(model, val_loader, use_ema=True)
-            val_ema_acc_np = evaluate_noprior(model, val_loader, use_ema=True)
+            # eval
+            train_acc, train_acc_each = evaluate(model, train_loader_sp)
+            val_acc, val_acc_each = evaluate(model, val_loader)
+            train_ema_acc, train_ema_acc_each = evaluate(model, train_loader_sp, use_ema=True)
+            val_ema_acc, val_ema_acc_each = evaluate(model, val_loader, use_ema=True)
+            
+            # save optimal model
+            if val_ema_acc > best_val_acc:
+                best_val_acc = val_ema_acc
+                save_results(model, optimizer, scheduler, metrics, best_epoch, e, args)
+                best_epoch = e
             
             # verbose
-            print("      train acc: {:.4f}, val acc: {:.4f}, np val acc: {:.4f}, bayes val acc: {:.4f}".format(
-                train_acc, val_acc, val_acc_np, bayes_val_acc))
-            print("(ema) train acc: {:.4f}, val acc: {:.4f}, np val acc: {:.4f}, bayes val acc: {:.4f}".format(
-                train_ema_acc, val_ema_acc, val_ema_acc_np, bayes_val_ema_acc))
-            print("best ema val acc: {:.4f}".format(best_val_acc))
+            m = f"      train acc: {train_acc:.4f}, val acc: {val_acc:.4f}"
+            for k in range(args.K):
+                m += f", val acc {k}: {val_acc_each[k]:.4f}"
+            print(m)
+            m = f"(ema) train acc: {train_ema_acc:.4f}, val acc: {val_ema_acc:.4f}"
+            for k in range(args.K):
+                m += f", val acc {k}: {val_ema_acc_each[k]:.4f}"
+            print(m)
             
+            # log
             metrics["train"]["acc"].append(train_acc)
             metrics["train"]["ema_acc"].append(train_ema_acc)
             metrics["val"]["acc"].append(val_acc)
-            metrics["val"]["acc_np"].append(val_acc_np)
+            metrics["val"]["acc_each"].append(val_acc_each)
             metrics["val"]["ema_acc"].append(val_ema_acc)
-            metrics["val"]["ema_acc_np"].append(val_ema_acc_np)
-            metrics["val"]["bayes_acc"].append(bayes_val_acc)
-            metrics["val"]["bayes_ema_acc"].append(bayes_val_ema_acc)
-            
-        if val_ema_acc > best_val_acc:
-            best_val_acc = val_ema_acc
-            save_results(model, optimizer, scheduler, metrics, best_epoch, e, args)
-            best_epoch = e
+            metrics["val"]["ema_acc_each"].append(val_ema_acc_each)
         
     return model, metrics
