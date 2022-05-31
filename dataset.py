@@ -2,6 +2,7 @@
 import os
 import re
 import numpy as np
+import random
 from PIL import Image
 import torch
 
@@ -36,13 +37,16 @@ class CIFAR10SSL(datasets.CIFAR10):
         return img, target
   
 class transform_unsp(object):
-    def __init__(self, transform_unsp_weak, transform_unsp_strong):
+    def __init__(self, args, transform_unsp_weak, transform_unsp_strong):
+        self.args = args
         self.weak = transform_unsp_weak
         self.strong = transform_unsp_strong
 
     def __call__(self, x):
+        num_ops = random.randint(*self.args.num_ops)
+        magnitude = random.randint(*self.args.magnitude)
         weak = self.weak(x)
-        strong = self.strong(x)
+        strong = self.strong(num_ops, magnitude)(x)
         return weak, strong
 
 def get_loader(args, seed=2022):
@@ -53,9 +57,9 @@ def get_loader(args, seed=2022):
     bz_unsp = 7 * bz_sp
     assert bz_unsp % n_order == 0, f"bz_unsp:{bz_unsp}, n_order:{n_order} - unsupervised batch size is not a multiple of n_order"
     
-    train_data_sp = CIFAR10SSL(root="data/cifar10", train=True, transform=transform_train_sp(args))
-    train_data_unsp = CIFAR10SSL(root="data/cifar10", train=True, transform=transform_unsp(transform_train_unsp_weak(args), transform_train_unsp_strong(args)))
-    val_data = CIFAR10SSL(root="data/cifar10", train=False, transform=transform_val(args), download=False)
+    train_data_sp = CIFAR10SSL(root="data/cifar10", train=True, transform=transform_train_sp())
+    train_data_unsp = CIFAR10SSL(root="data/cifar10", train=True, transform=transform_unsp(args, transform_train_unsp_weak(), transform_train_unsp_strong))
+    val_data = CIFAR10SSL(root="data/cifar10", train=False, transform=transform_val(), download=False)
     
     labels = np.array(train_data_sp.targets)
     rng = np.random.default_rng(args.seed)

@@ -1,6 +1,7 @@
 from re import A
 import time, os, json
 from collections import defaultdict
+import numpy as np
 import torch
 from torch import nn
 from utils import mixup_batch, save_results
@@ -120,7 +121,8 @@ def train(model, optimizer, scheduler, scaler, args,
 
     train_metrics = defaultdict(list)
     val_metrics = defaultdict(list)
-    metrics = {"train": train_metrics, "val": val_metrics}
+    run_stats = defaultdict(list)
+    metrics = {"train": train_metrics, "val": val_metrics, "run_stats": run_stats}
 
     # evaluation
     train_acc, train_acc_each = evaluate(model, train_loader_sp)
@@ -141,8 +143,9 @@ def train(model, optimizer, scheduler, scaler, args,
     mi_run, ce_run, loss_run = 0.0, 0.0, 0.0
     H_y_run, H_yw_run = 0.0, 0.0
     entropy_run, mask_run = 0.0, 0.0
+    pmax_stat_run = torch.zeros(4)
     t0 = time.time()
-    for e in range(start_epoch, args.run_epochs):
+    for e in range(start_epoch, args.epochs):
         _ = model.train()
 
         sp_loader_iter = iter(train_loader_sp)
@@ -175,7 +178,7 @@ def train(model, optimizer, scheduler, scaler, args,
                 del out
                 
                 logLikelihood = model.get_logLikelihood(out_sp, targets)
-                MI, H_y, H_yw, mask_ratio = model.get_MI(out_unsp)
+                MI, H_y, H_yw, mask_ratio, pmax_stat = model.get_MI(out_unsp)
 
                 ### update ###
                 optimizer.zero_grad()
@@ -205,10 +208,11 @@ def train(model, optimizer, scheduler, scaler, args,
             H_yw_run += H_yw.item()
             entropy_run += entropy.item()
             mask_run += mask_ratio.item()
-            
+            pmax_stat_run += pmax_stat
+
             # verbose
             if (step+1) % report_freq == 0:
-                print("Step {}/{}, lr:{:.8f}, loss: {:.4f}, MI: {:.4f}, ce_loss: {:.4f}, H_y: {:.4f}, H_yw: {:.4f}, info_loss: {:.4f}".format(
+                print("Step {}/{}, lr:{:.5f}, loss: {:.4f}, MI: {:.4f}, ce_loss: {:.4f}, H_y: {:.4f}, H_yw: {:.4f}, info_loss: {:.4f}".format(
                     step+1, args.e_step, scheduler.get_last_lr()[0], loss.item(), MI.item(), -logLikelihood.item(), H_y.item(), H_yw.item(), (H_y-H_yw).item()))
         
         mi_run /= e_loader_step
@@ -218,11 +222,21 @@ def train(model, optimizer, scheduler, scaler, args,
         H_yw_run /= e_loader_step
         entropy_run /= e_loader_step
         mask_run /= e_loader_step
+        pmax_stat_run /= e_loader_step
         t2 = time.time()
         
+        metrics["run_stats"]["mi_run"].append(mi_run)
+        metrics["run_stats"]["ce_run"].append(ce_run)
+        metrics["run_stats"]["loss_run"].append(loss_run)
+        metrics["run_stats"]["H_y_run"].append(H_y_run)
+        metrics["run_stats"]["H_yw_run"].append(H_yw_run)
+        metrics["run_stats"]["entropy_run"].append(entropy_run)
+        metrics["run_stats"]["mask_run"].append(mask_run)
+        metrics["run_stats"]["pmax_stat_run"].append(pmax_stat_run.tolist())
+        
         print("Epoch {}/{}, lr:{:.4f}, e_time: {:.2f} mins, total_time: {:.2f} mins".format(e+1, args.epochs, scheduler.get_last_lr()[0], (t2 - t1)/60, (t2 - t0)/60))
-        print("(accumu) mi:{:.4f}, ce_loss:{:.4f}, loss:{:.4f}, H_y:{:.4f}, H_yw:{:.4f}, entropy:{:.4f}, mask_ratio:{:.4f}".format(
-            mi_run, ce_run, loss_run, H_y_run, H_yw_run, entropy_run, mask_run))
+        print("(accumu) mi:{:.3f}, ce_loss:{:.4f}, loss:{:.3f}, H_y:{:.3f}, H_yw:{:.3f}, entropy:{:.3f}, mask_ratio:{:.3f}, pw_mean:{:.3f}, pw_std:{:.3f}, ps_mean:{:.3f}, ps_std:{:.3f}".format(
+            mi_run, ce_run, loss_run, H_y_run, H_yw_run, entropy_run, mask_run, *pmax_stat_run.tolist()))
 
         if (e+1) % eval_freq == 0:
             # eval
@@ -230,6 +244,14 @@ def train(model, optimizer, scheduler, scaler, args,
             val_acc, val_acc_each = evaluate(model, val_loader)
             train_ema_acc, train_ema_acc_each = evaluate(model, train_loader_sp, use_ema=True)
             val_ema_acc, val_ema_acc_each = evaluate(model, val_loader, use_ema=True)
+
+            # log
+            metrics["train"]["acc"].append(train_acc)
+            metrics["train"]["ema_acc"].append(train_ema_acc)
+            metrics["val"]["acc"].append(val_acc)
+            metrics["val"]["acc_each"].append(val_acc_each)
+            metrics["val"]["ema_acc"].append(val_ema_acc)
+            metrics["val"]["ema_acc_each"].append(val_ema_acc_each)
             
             # save optimal model
             if val_ema_acc > best_val_acc:
@@ -238,21 +260,16 @@ def train(model, optimizer, scheduler, scaler, args,
                 best_epoch = e
             
             # verbose
-            m = f"      train acc: {train_acc:.4f}, val acc: {val_acc:.4f}"
+            m = f"      train acc: {train_acc:.3f}, val acc: {val_acc:.3f}"
             for k in range(args.K):
-                m += f", val acc {k}: {val_acc_each[k]:.4f}"
+                m += f", val acc {k}: {val_acc_each[k]:.3f}"
+            m += f", std: {np.std(val_acc_each):.3f}"
             print(m)
-            m = f"(ema) train acc: {train_ema_acc:.4f}, val acc: {val_ema_acc:.4f}"
+            m = f"(ema) train acc: {train_ema_acc:.3f}, val acc: {val_ema_acc:.3f}"
             for k in range(args.K):
-                m += f", val acc {k}: {val_ema_acc_each[k]:.4f}"
+                m += f", val acc {k}: {val_ema_acc_each[k]:.3f}"
+            m += f", std: {np.std(val_ema_acc_each):.3f}"
             print(m)
+            print(f"best val acc: {best_val_acc:.3f}")
             
-            # log
-            metrics["train"]["acc"].append(train_acc)
-            metrics["train"]["ema_acc"].append(train_ema_acc)
-            metrics["val"]["acc"].append(val_acc)
-            metrics["val"]["acc_each"].append(val_acc_each)
-            metrics["val"]["ema_acc"].append(val_ema_acc)
-            metrics["val"]["ema_acc_each"].append(val_ema_acc_each)
-        
     return model, metrics

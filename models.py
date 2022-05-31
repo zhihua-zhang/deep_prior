@@ -236,6 +236,7 @@ class DeepPrior(nn.Module):
         # shape: (bz//n_order, K, n_label^n_order)
         prob_all_w, prob_all_s = self.get_all_prob(out_unsp).chunk(2, dim=0)
         
+        ## calc H_y
         prior = self.get_prior().reshape(1,-1,1)
         if self.args.Hy_use_weak:
             prob_per_y = (prob_all_w * prior).sum(dim=1)
@@ -244,46 +245,36 @@ class DeepPrior(nn.Module):
             prob_per_y = (prob_all_avg * prior).sum(dim=1)
         H_y = (-prob_per_y * torch.log(prob_per_y + 1e-12)).sum(dim=1).mean() / self.args.n_order
 
-        if self.args.Hyw_use_order:
-            if self.args.no_gradient_stop:
-                p_w = prob_all_w
-            else:
-                p_w = prob_all_w.detach()
-            p_s = prob_all_s
-
-            if self.args.no_jensen:
-                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
-                entropy = (-p_avg * torch.log(p_avg + 1e-12)).sum(dim=-1)
-            else:
-                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
-                entropy = (-p_avg * (self.args.tau * torch.log(p_w + 1e-12) + (1 - self.args.tau) * torch.log(p_s + 1e-12))).sum(dim=-1)
-            
-            # mask = prob_all_w.max(dim=-1)[0].ge(0.95 ** self.args.n_order)
-            mask = prob_all_w.max(dim=-1)[0].ge(self.args.label_thresh)
+        ## calc H_yw
+        out_unsp_w, out_unsp_s = out_unsp.chunk(2, dim=0)
+        if self.args.no_gradient_stop:
+            p_w = out_unsp_w
         else:
-            out_unsp_w, out_unsp_s = out_unsp.chunk(2, dim=0)
-            if self.args.no_gradient_stop:
-                p_w = out_unsp_w
-            else:
-                p_w = out_unsp_w.detach()
-            p_s = out_unsp_s
-            
-            if self.args.no_jensen:
-                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
-                entropy = (-p_avg * torch.log(p_avg + 1e-12)).sum(dim=1)
-            else:
-                p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
-                entropy = (-p_avg * (self.args.tau * torch.log(p_w + 1e-12) + (1 - self.args.tau) * torch.log(p_s + 1e-12))).sum(dim=1)
-            
-            mask = p_w.max(dim=1)[0].ge(self.args.label_thresh)
+            p_w = out_unsp_w.detach()
+        p_s = out_unsp_s
         
+        if self.args.no_jensen:
+            p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
+            entropy = (-p_avg * torch.log(p_avg + 1e-12)).sum(dim=1)
+        else:
+            p_avg = (self.args.tau * p_w + (1 - self.args.tau) * p_s)
+            entropy = (-p_avg * (self.args.tau * torch.log(p_w + 1e-12) + (1 - self.args.tau) * torch.log(p_s + 1e-12))).sum(dim=1)
+        
+        mask = p_w.max(dim=1)[0].ge(self.args.label_thresh)
         prior = prior.reshape(1,-1)
-        mask_ratio = mask.sum() / mask.nelement()
-        
         H_yw = (entropy * prior * mask).sum(dim=1).mean()
+        
+        # output
+        with torch.no_grad():
+            p_w, p_s = out_unsp.chunk(2, dim=0)
+            
+            pw_prob = p_w.max(dim=1)[0]
+            ps_prob = p_s.max(dim=1)[0]
+            pmax_stat = torch.tensor([pw_prob.mean(), pw_prob.std(), ps_prob.mean(), ps_prob.std()])
+        mask_ratio = mask.sum() / mask.nelement()
         MI = self.args.alpha * H_y - H_yw
 
-        return MI, H_y, H_yw, mask_ratio
+        return MI, H_y, H_yw, mask_ratio, pmax_stat
     
     def get_logLikelihood(self, out_sp, targets):
         """
