@@ -81,25 +81,13 @@ def mixup_batch(inp, target, args):
     
 def viz(imgs, args, aug_type="w", dirs="img_viz", ):
     import os
+    from torchvision.utils import save_image, make_grid
     os.makedirs(dirs, exist_ok=True)
     file_name = f"n={args.num_ops}_m={args.magnitude}_{aug_type}.jpg"
     
     nrow = int(len(imgs) ** 0.5)
     save_image(make_grid(imgs.float(), nrow=nrow, normalize=True), f"{dirs}/{file_name}")
     
-    from torchvision.utils import save_image, make_grid
-    # for n,m in [[2,15], [2,20], [6,10], [6,15], [8,10]]:
-    #     args.num_ops=n
-    #     args.magnitude=m
-        
-    #     train_loader_sp, train_loader_unsp, val_loader = get_loader(args)
-    #     unsp_loader_iter = iter(train_loader_unsp)
-    #     data_unsp, _ = unsp_loader_iter.next()
-    #     data_unsp_w, data_unsp_s = data_unsp
-        
-    #     viz(data_unsp_w, args, "w")
-    #     viz(data_unsp_s, args, "s")
-
 
 def report(metrics, epochs, n_report=200):
     fig, ax = plt.subplots(1, 2, figsize=(12,5))
