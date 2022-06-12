@@ -6,12 +6,8 @@ import matplotlib.pyplot as plt
 
 import torch
 from torch import nn, Tensor
-import torchvision
 import torchvision.transforms as T
 
-from kornia import augmentation as aug
-from kornia import filters
-from kornia.geometry import transform as tf
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
 cifar10_std = (0.2471, 0.2435, 0.2616)
@@ -19,6 +15,7 @@ cifar100_mean = (0.5071, 0.4867, 0.4408)
 cifar100_std = (0.2675, 0.2565, 0.2761)
 normal_mean = (0.5, 0.5, 0.5)
 normal_std = (0.5, 0.5, 0.5)
+
 
 class RandomApply(nn.Module):
     def __init__(self, fn, p):
@@ -29,6 +26,7 @@ class RandomApply(nn.Module):
     def forward(self, x: Tensor):
         return x if random.random() > self.p else self.fn(x)
 
+
 def transform_train_sp():
     return T.Compose([
         T.RandomHorizontalFlip(),
@@ -38,6 +36,7 @@ def transform_train_sp():
         T.ToTensor(),
         T.Normalize(mean=cifar10_mean, std=cifar10_std)
     ])
+
 
 def transform_train_unsp_weak():
     return T.Compose([
@@ -59,20 +58,14 @@ def transform_train_unsp_strong(num_ops, magnitude):
         T.ToTensor(),
         T.Normalize(mean=cifar10_mean, std=cifar10_std)
     ])
-    return T.RandomApply(
-        nn.ModuleList([
-            T.RandomResizedCrop(image_size, scale=(0.7,1.0)),
-            T.RandomAffine(30),
-            T.RandomPerspective(p=1.0),
-            T.GaussianBlur((3,3), sigma=(0.1,1.0)),
-        ]), p=0.5
-    )
+
 
 def transform_val():
     return T.Compose([
         T.ToTensor(),
         T.Normalize(mean=cifar10_mean, std=cifar10_std)
     ])
+
 
 def mixup_batch(inp, target, args):
     beta_sample = np.random.beta(args.mixup_alpha, args.mixup_alpha)
@@ -85,15 +78,16 @@ def mixup_batch(inp, target, args):
     mixed_target = beta_sample * target + (1 - beta_sample) * target[index]
     return mixed_inp, mixed_target
     
+    
 def viz(imgs, args, aug_type="w", dirs="img_viz", ):
     import os
-    from torchvision.utils import save_image, make_grid
     os.makedirs(dirs, exist_ok=True)
     file_name = f"n={args.num_ops}_m={args.magnitude}_{aug_type}.jpg"
     
     nrow = int(len(imgs) ** 0.5)
     save_image(make_grid(imgs.float(), nrow=nrow, normalize=True), f"{dirs}/{file_name}")
     
+    from torchvision.utils import save_image, make_grid
     # for n,m in [[2,15], [2,20], [6,10], [6,15], [8,10]]:
     #     args.num_ops=n
     #     args.magnitude=m
@@ -105,6 +99,7 @@ def viz(imgs, args, aug_type="w", dirs="img_viz", ):
         
     #     viz(data_unsp_w, args, "w")
     #     viz(data_unsp_s, args, "s")
+
 
 def report(metrics, epochs, n_report=200):
     fig, ax = plt.subplots(1, 2, figsize=(12,5))
@@ -138,7 +133,7 @@ def save_results(model, optimizer, scheduler, metrics, old_epoch, curr_epoch, ar
     curr_output_dir = os.path.join("outputs", args.save_prefix, "epoch={}".format(curr_epoch+1))
     os.makedirs(curr_output_dir, exist_ok=True)
     
-    checkpoint_path = os.path.join(curr_output_dir, "checkpoint.pth".format(metrics["val"]["acc"][-1]))
+    checkpoint_path = os.path.join(curr_output_dir, "checkpoint.pth")
     torch.save(model.state_dict(), checkpoint_path)
 
     optimizer_path = os.path.join(curr_output_dir, "optimizer.pth")

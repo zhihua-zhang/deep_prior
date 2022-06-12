@@ -260,16 +260,14 @@ def train(model, optimizer, scheduler, scaler, args,
                 best_epoch = e
             
             # verbose
-            m = f"      train acc: {train_acc:.3f}, val acc: {val_acc:.3f}"
-            for k in range(args.K):
-                m += f", val acc {k}: {val_acc_each[k]:.3f}"
-            m += f", std: {np.std(val_acc_each):.3f}"
+            m = "      train acc: {:.4f}, val acc: {:.4f}, particle accs: {}".format(
+                train_acc, val_acc, [round(x,4) for x in val_acc_each])
+            m += f", std: {np.std(val_acc_each):.4f}"
             print(m)
-            m = f"(ema) train acc: {train_ema_acc:.3f}, val acc: {val_ema_acc:.3f}"
-            for k in range(args.K):
-                m += f", val acc {k}: {val_ema_acc_each[k]:.3f}"
-            m += f", std: {np.std(val_ema_acc_each):.3f}"
+            m = "(ema) train acc: {:.4f}, val acc: {:.4f}, particle accs: {}".format(
+                train_ema_acc, val_ema_acc, [round(x,4) for x in val_ema_acc_each])
+            m += f", std: {np.std(val_ema_acc_each):.4f}"
             print(m)
-            print(f"best val acc: {best_val_acc:.3f}")
+            print(f"best val acc: {best_val_acc:.4f}")
             
     return model, metrics

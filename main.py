@@ -3,15 +3,14 @@ import os
 import math
 
 from dataset import get_loader
-from models import build_BaseModel, DeepPrior, EmaModel
+from models import DeepPrior, EmaModel
 from trainer import train
-from utils import report
 
 import argparse
 
 def get_args(args=None):
     parser = argparse.ArgumentParser(description='argparse')
-    model_group = parser.add_argument_group(description='BYOL')
+    model_group = parser.add_argument_group(description='deep prior')
     model_group.add_argument("--n_order", type=int, default=2,
                              help="order for reference prior")
     model_group.add_argument("--K", type=int, default=4,
@@ -136,7 +135,6 @@ if __name__ == "__main__":
     lr = args.K * args.base_lr
     weight_decay = 5 / args.K * args.weight_decay
     optimizer = torch.optim.SGD(model.get_opt_params(wd=weight_decay), lr=lr, momentum=0.9, nesterov=True)
-    # optimizer_sp = torch.optim.SGD(model_sp.parameters(), lr=lr, momentum=0.9, nesterov=True, weight_decay=weight_decay)
     def create_warmup_scheduler(optimizer, num_cycles=7./16., last_epoch=-1):
         num_warmup_steps = args.e_warmup * args.e_step
         num_training_steps = args.epochs * args.e_step
